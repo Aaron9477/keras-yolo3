@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+#!coding=utf-8
 """
 Reads Darknet config and weights and creates Keras model with TF backend.
 
@@ -42,7 +43,7 @@ def unique_config_sections(config_file):
     Adds unique suffixes to config sections for compability with configparser.
     """
     section_counters = defaultdict(int)
-    output_stream = io.StringIO()
+    output_stream = io.BytesIO()
     with open(config_file) as fin:
         for line in fin:
             if line.startswith('['):
