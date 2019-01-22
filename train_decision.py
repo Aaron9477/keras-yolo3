@@ -11,7 +11,7 @@ from keras.models import Model
 from keras.optimizers import Adam
 from keras.callbacks import TensorBoard, ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
 
-from yolo3.model import preprocess_true_boxes, yolo_body, tiny_yolo_body, yolo_loss
+from yolo3.model import preprocess_true_boxes, yolo_body, tiny_yolo_body, yolo_loss, tiny_yolo_and_decision
 from yolo3.utils import get_random_data
 
 
@@ -149,8 +149,8 @@ def create_tiny_model(input_shape, anchors, num_classes, load_pretrained=True, f
             weights_path='model_data/tiny_yolo_weights.h5'):
     '''create the training model, for Tiny YOLOv3'''
     K.clear_session() # get a new session
-    image_input = Input(shape=(None, None, 3))
     h, w = input_shape
+    image_input = Input(shape=(h, w, 3))
     num_anchors = len(anchors)
 
     # shape=(?, 10, 10, 3, 7) dtype=float32>, <tf.Tensor 'input_3:0' shape=(?, 20, 20, 3, 7) dtype=float32>
@@ -158,7 +158,7 @@ def create_tiny_model(input_shape, anchors, num_classes, load_pretrained=True, f
     y_true = [Input(shape=(h//{0:32, 1:16}[l], w//{0:32, 1:16}[l], \
         num_anchors//2, num_classes+5)) for l in range(2)]
 
-    model_body = tiny_yolo_body(image_input, num_anchors//2, num_classes)
+    model_body = tiny_yolo_and_decision(image_input, num_anchors//2, num_classes)
     print('Create Tiny YOLOv3 model with {} anchors and {} classes.'.format(num_anchors, num_classes))
 
     if load_pretrained:

@@ -1,3 +1,5 @@
+#! /usr/bin/env python
+#!coding=utf-8
 """YOLO_v3 Model Defined in Keras."""
 
 from functools import wraps
@@ -10,6 +12,8 @@ from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.normalization import BatchNormalization
 from keras.models import Model
 from keras.regularizers import l2
+from keras.layers.merge import add
+from keras.layers import Dense, Dropout, Activation, Flatten
 
 from yolo3.utils import compose
 
@@ -18,7 +22,7 @@ from yolo3.utils import compose
 def DarknetConv2D(*args, **kwargs):
     """Wrapper to set Darknet parameters for Convolution2D."""
     darknet_conv_kwargs = {'kernel_regularizer': l2(5e-4)}
-    darknet_conv_kwargs['padding'] = 'valid' if kwargs.get('strides')==(2,2) else 'same'
+    darknet_conv_kwargs['padding'] = 'same'
     darknet_conv_kwargs.update(kwargs)
     return Conv2D(*args, **darknet_conv_kwargs)
 
@@ -116,16 +120,75 @@ def tiny_yolo_body(inputs, num_anchors, num_classes):
             DarknetConv2D_BN_Leaky(256, (3,3)),
             DarknetConv2D(num_anchors*(num_classes+5), (1,1)))([x2,x1])
 
-    return Model(inputs, [y1,y2])
+    model = Model(inputs, [y1,y2])
+    # 打印网络参数
+    print(model.summary())
+    return model
+
+def tiny_yolo_and_decision(inputs, num_anchors, num_classes, decision_output=1):
+    '''Create Tiny YOLO_v3 model CNN body in keras.'''
+    x1 = compose(
+            DarknetConv2D_BN_Leaky(16, (3,3)),
+            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
+            DarknetConv2D_BN_Leaky(32, (3,3)),
+            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
+            DarknetConv2D_BN_Leaky(64, (3,3)),
+            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
+            DarknetConv2D_BN_Leaky(128, (3,3)),
+            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
+            DarknetConv2D_BN_Leaky(256, (3,3)))(inputs)
+    x2 = compose(
+            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
+            DarknetConv2D_BN_Leaky(512, (3,3)),
+            MaxPooling2D(pool_size=(2,2), strides=(1,1), padding='same'),
+            DarknetConv2D_BN_Leaky(1024, (3,3)),
+            DarknetConv2D_BN_Leaky(256, (1,1)))(x1)
+    y1 = compose(
+            DarknetConv2D_BN_Leaky(512, (3,3)),
+            DarknetConv2D(num_anchors*(num_classes+5), (1,1)))(x2)
+
+    x3 = compose(
+            DarknetConv2D_BN_Leaky(128, (1,1)),
+            UpSampling2D(2))(x2)
+    y2 = compose(
+            Concatenate(),
+            DarknetConv2D_BN_Leaky(256, (3,3)),
+            DarknetConv2D(num_anchors*(num_classes+5), (1,1)))([x3,x1])
+
+    x4 = DarknetConv2D_BN_Leaky(256, (3, 3), strides=(2,2))(x1)
+    x5 = add([x2, x4])
+    x6 = DarknetConv2D_BN_Leaky(256, (1, 1))(x5)
+
+    x7 = Flatten()(x6)
+    x7 = Activation('relu')(x7)
+    x7 = Dropout(0.5)(x7)
+
+    # Steering channel
+    steer = Dense(decision_output)(x7)
+
+    # Collision channel
+    coll = Dense(decision_output)(x7)
+    coll = Activation('sigmoid')(coll)
+
+    model = Model(inputs, [y1, y2, steer, coll])
+    # 打印网络参数
+    print(model.summary())
+    return model
 
 
 def yolo_head(feats, anchors, num_classes, input_shape, calc_loss=False):
     """Convert final layer features to bounding box parameters."""
+    # feats是一个4d tensor[bs, width, height, channel]
+    # GAP->channel是每个anchor预测的bbox数3*(4+1+class)=21
     num_anchors = len(anchors)
     # Reshape to batch, height, width, num_anchors, box_params.
+    # K.constant创建一个常数张量
     anchors_tensor = K.reshape(K.constant(anchors), [1, 1, 1, num_anchors, 2])
 
+    # 就是取第二第三个的维度，结果是两个数字，所以grid_shape是一维[a,b]
     grid_shape = K.shape(feats)[1:3] # height, width
+    # K.tile创建一个用n平铺的x张量
+    # reshape时-1所在的位置，通道数不定
     grid_y = K.tile(K.reshape(K.arange(0, stop=grid_shape[0]), [-1, 1, 1, 1]),
         [1, grid_shape[1], 1, 1])
     grid_x = K.tile(K.reshape(K.arange(0, stop=grid_shape[1]), [1, -1, 1, 1]),
@@ -362,14 +425,19 @@ def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
     yolo_outputs = args[:num_layers]
     y_true = args[num_layers:]
     anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [1,2,3]]
+    # cast改变张量的数据类型
+    # input大小是output*32
     input_shape = K.cast(K.shape(yolo_outputs[0])[1:3] * 32, K.dtype(y_true[0]))
     grid_shapes = [K.cast(K.shape(yolo_outputs[l])[1:3], K.dtype(y_true[0])) for l in range(num_layers)]
     loss = 0
     m = K.shape(yolo_outputs[0])[0] # batch size, tensor
     mf = K.cast(m, K.dtype(yolo_outputs[0]))
 
+    # 对每个输出进行操作
     for l in range(num_layers):
+        # 是否是物体那一列
         object_mask = y_true[l][..., 4:5]
+        # 物体类别
         true_class_probs = y_true[l][..., 5:]
 
         grid, raw_pred, pred_xy, pred_wh = yolo_head(yolo_outputs[l],

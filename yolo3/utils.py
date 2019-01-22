@@ -1,3 +1,5 @@
+#! /usr/bin/env python
+#!coding=utf-8
 """Miscellaneous utility functions."""
 
 from __future__ import division
@@ -13,6 +15,8 @@ def compose(*funcs):
     Reference: https://mathieularose.com/function-composition-in-python/
     """
     # return lambda x: reduce(lambda v, f: f(v), funcs, x)
+    # reduce函数 对sequence连续使用function, 如果不给出initial, 则第一次调用传递sequence的两个元素, 以后把前一次调用的结果和sequence的下一个元素传递给function
+    # 这里就是连续调用lambda函数,嵌套进行使用
     if funcs:
         return reduce(lambda f, g: lambda *a, **kw: g(f(*a, **kw)), funcs)
     else:
@@ -32,6 +36,7 @@ def letterbox_image(image, size):
     return new_image
 
 def rand(a=0, b=1):
+    # np.random.rand()返回一个或一组服从“0~1”均匀分布的随机样本值
     return np.random.rand()*(b-a) + a
 
 def get_random_data(annotation_line, input_shape, random=True, max_boxes=20, jitter=.3, hue=.1, sat=1.5, val=1.5, proc_img=True):
