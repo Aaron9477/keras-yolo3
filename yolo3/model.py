@@ -120,13 +120,13 @@ def tiny_yolo_body(inputs, num_anchors, num_classes):
             DarknetConv2D_BN_Leaky(256, (3,3)),
             DarknetConv2D(num_anchors*(num_classes+5), (1,1)))([x2,x1])
 
-    model = Model(inputs, [y1,y2])
+    model = Model(inputs, [y1, y2])
     # 打印网络参数
     print(model.summary())
     return model
 
 def tiny_yolo_and_decision(inputs, num_anchors, num_classes, decision_output=1):
-    '''Create Tiny YOLO_v3 model CNN body in keras.'''
+    '''Create Tiny YOLO_v3 model CNN body and rpg_dronet.'''
     x1 = compose(
             DarknetConv2D_BN_Leaky(16, (3,3)),
             MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
@@ -182,17 +182,18 @@ def yolo_head(feats, anchors, num_classes, input_shape, calc_loss=False):
     # GAP->channel是每个anchor预测的bbox数3*(4+1+class)=21
     num_anchors = len(anchors)
     # Reshape to batch, height, width, num_anchors, box_params.
-    # K.constant创建一个常数张量
+    # 每一个anchor都是一个维数为2的向量，所以最后一维的维数是2
     anchors_tensor = K.reshape(K.constant(anchors), [1, 1, 1, num_anchors, 2])
 
     # 就是取第二第三个的维度，结果是两个数字，所以grid_shape是一维[a,b]
-    grid_shape = K.shape(feats)[1:3] # height, width
-    # K.tile创建一个用n平铺的x张量
+    grid_shape = K.shape(feats)[1:3] # 输出特征图的height, width，也就是[10,10]
+    # K.tile(x, n) 将x在各个维度上重复n次，x为张量，n为与x维度数目相同的列表
     # reshape时-1所在的位置，通道数不定
     grid_y = K.tile(K.reshape(K.arange(0, stop=grid_shape[0]), [-1, 1, 1, 1]),
-        [1, grid_shape[1], 1, 1])
+                    [1, grid_shape[1], 1, 1])
     grid_x = K.tile(K.reshape(K.arange(0, stop=grid_shape[1]), [1, -1, 1, 1]),
-        [grid_shape[0], 1, 1, 1])
+                    [grid_shape[0], 1, 1, 1])
+    # 这里得到的是一个坐标的集合，包含特征图上所有点的坐标，也就是最终需要微调的点的坐标
     grid = K.concatenate([grid_x, grid_y])
     grid = K.cast(grid, K.dtype(feats))
 
@@ -200,11 +201,15 @@ def yolo_head(feats, anchors, num_classes, input_shape, calc_loss=False):
         feats, [-1, grid_shape[0], grid_shape[1], num_anchors, num_classes + 5])
 
     # Adjust preditions to each spatial grid point and anchor size.
+    # 利用sigmoid得到输出的中心坐标微调值，和原坐标相加，再除以总长度，得到在原图中的相对比例位置
     box_xy = (K.sigmoid(feats[..., :2]) + grid) / K.cast(grid_shape[::-1], K.dtype(feats))
+    # 长和宽用exp来做
     box_wh = K.exp(feats[..., 2:4]) * anchors_tensor / K.cast(input_shape[::-1], K.dtype(feats))
     box_confidence = K.sigmoid(feats[..., 4:5])
     box_class_probs = K.sigmoid(feats[..., 5:])
 
+    # 训练时有label，并不需要objectness和各类别的可能性
+    # 而推理时，需要输出当前的置信度
     if calc_loss == True:
         return grid, feats, box_xy, box_wh
     return box_xy, box_wh, box_confidence, box_class_probs
@@ -426,28 +431,32 @@ def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
     y_true = args[num_layers:]
     anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [1,2,3]]
     # cast改变张量的数据类型
-    # input大小是output*32
+    # input大小是output[0]*32,因为yolo最终的特征图大小是输入的1/32
     input_shape = K.cast(K.shape(yolo_outputs[0])[1:3] * 32, K.dtype(y_true[0]))
     grid_shapes = [K.cast(K.shape(yolo_outputs[l])[1:3], K.dtype(y_true[0])) for l in range(num_layers)]
     loss = 0
     m = K.shape(yolo_outputs[0])[0] # batch size, tensor
     mf = K.cast(m, K.dtype(yolo_outputs[0]))
 
-    # 对每个输出进行操作
+    # 对每一层输出进行操作
     for l in range(num_layers):
+        # list中...是省略其它维度,这里就是不管其它维度，这里只看最后一维的第5列，所有的objectness
         # 是否是物体那一列
         object_mask = y_true[l][..., 4:5]
-        # 物体类别
+        # 物体类别,第六列后面的所有列
         true_class_probs = y_true[l][..., 5:]
 
+        # grid最终特征图大小各个中心点坐标集合　raw_pred神经网络的原生输出　pred_xy预测的中心点　pred_wh预测的长宽
         grid, raw_pred, pred_xy, pred_wh = yolo_head(yolo_outputs[l],
              anchors[anchor_mask[l]], num_classes, input_shape, calc_loss=True)
         pred_box = K.concatenate([pred_xy, pred_wh])
 
         # Darknet raw box to calculate loss.
+        # 下面是真实的anchor与object的xy的偏差
         raw_true_xy = y_true[l][..., :2]*grid_shapes[l][::-1] - grid
         raw_true_wh = K.log(y_true[l][..., 2:4] / anchors[anchor_mask[l]] * input_shape[::-1])
         raw_true_wh = K.switch(object_mask, raw_true_wh, K.zeros_like(raw_true_wh)) # avoid log(0)=-inf
+        # anchor和object的越契合，scale越大
         box_loss_scale = 2 - y_true[l][...,2:3]*y_true[l][...,3:4]
 
         # Find ignore mask, iterate over each of batch.

@@ -17,13 +17,14 @@ from yolo3.utils import get_random_data
 
 def _main():
     # change the setting following!!!#############
-    annotation_path = 'turtlebot_training/train.txt'
+    annotation_path = 'detection_decision/train.txt'
     log_dir = 'logs/turtlebot/'
-    classes_path = 'turtlebot_training/classes.txt'
-    anchors_path = 'turtlebot_training/anchor.txt'
-    # only one of the following will be used
-    tiny_yolo_weights_path = 'turtlebot_training/darknet15_weights.h5'
+    classes_path = 'detection_decision/classes.txt'
+    anchors_path = 'detection_decision/anchor.txt'
+    # because I just use the tiny version, so only one of the following will be used
+    tiny_yolo_weights_path = 'detection_decision/darknet15_weights.h5'
     yolo_weights_path = 'model_data/yolo_weights.h5'
+    # TODO: the bs may need be changed
     first_stage_bs = 16
     second_stage_bs = 16
     ##############################################
@@ -154,7 +155,9 @@ def create_tiny_model(input_shape, anchors, num_classes, load_pretrained=True, f
     num_anchors = len(anchors)
 
     # shape=(?, 10, 10, 3, 7) dtype=float32>, <tf.Tensor 'input_3:0' shape=(?, 20, 20, 3, 7) dtype=float32>
-    # 因为输出有两层
+    # 因为输出有两层，每一层是一个尺度上的检测，num_anchors//2代表这层的anchor的数量
+    # 这里是一个字典，0代表32，1代表16
+    # num_classes+5，中的5是两个坐标和objectness
     y_true = [Input(shape=(h//{0:32, 1:16}[l], w//{0:32, 1:16}[l], \
         num_anchors//2, num_classes+5)) for l in range(2)]
 
@@ -164,6 +167,7 @@ def create_tiny_model(input_shape, anchors, num_classes, load_pretrained=True, f
     if load_pretrained:
         # by_name=True意味着通过layer的名字进行读取
         # by_name=False意味着通过网络结构进行读取
+        # 这里应该是因为所有的layer都是默认的名字，所以，直接对应就好
         model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
         print('Load weights {}.'.format(weights_path))
         if freeze_body in [1, 2]:

@@ -153,8 +153,9 @@ def create_tiny_model(input_shape, anchors, num_classes, load_pretrained=True, f
     h, w = input_shape
     num_anchors = len(anchors)
 
-    # shape=(?, 10, 10, 3, 7) dtype=float32>, <tf.Tensor 'input_3:0' shape=(?, 20, 20, 3, 7) dtype=float32>
+    # 这里只是定义了y_true的维度，shape=(?, 10, 10, 3, 7) dtype=float32>, <tf.Tensor 'input_3:0' shape=(?, 20, 20, 3, 7) dtype=float32>
     # 因为输出有两层
+    # 定义的Input中的shape不包括batch这一个维度，只是每一个batch的维度，所以一共是五维
     y_true = [Input(shape=(h//{0:32, 1:16}[l], w//{0:32, 1:16}[l], \
         num_anchors//2, num_classes+5)) for l in range(2)]
 
@@ -172,8 +173,8 @@ def create_tiny_model(input_shape, anchors, num_classes, load_pretrained=True, f
             for i in range(num): model_body.layers[i].trainable = False
             print('Freeze the first {} layers of total {} layers.'.format(num, len(model_body.layers)))
 
-    # Lambda用以对上一层的输出施以任何TensorFlow表达式,此处是yolo_loss这个函数
-    # 调用函数使用＊，是将每个元素作为位置参数传入，所以现在相当于传入一个list [*model_body.output, *y_true]，元素数为len(model_body.outpu)+len(y_true)
+    # Lambda用以对上一层的输出施以任何TensorFlow表达式,此处是yolo_loss这个函数,[*model_body.output, *y_true]是传入的元素
+    # 调用函数使用＊，是将每个元素作为位置参数传入，所以现在相当于传入一个list [*model_body.output, *y_true]，元素数为len(model_body.output)+len(y_true)
     model_loss = Lambda(yolo_loss, output_shape=(1,), name='yolo_loss',
         arguments={'anchors': anchors, 'num_classes': num_classes, 'ignore_thresh': 0.7})(
         [*model_body.output, *y_true])
