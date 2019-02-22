@@ -5,9 +5,11 @@
 from __future__ import division
 from functools import reduce
 
+import cv2
 from PIL import Image
 import numpy as np
 from matplotlib.colors import rgb_to_hsv, hsv_to_rgb
+
 
 def compose(*funcs):
     """Compose arbitrarily many functions, evaluated left to right.
@@ -125,3 +127,50 @@ def get_random_data(annotation_line, input_shape, random=True, max_boxes=20, jit
         box_data[:len(box)] = box
 
     return image_data, box_data
+
+
+def dronet_load_img(path, target_size=None, crop_size=None):
+    """
+    Load an image.
+
+    # Arguments
+        path: Path to image file.
+        grayscale: Boolean, whether to load the image as grayscale.
+        target_size: Either `None` (default to original size)
+            or tuple of ints `(img_width, img_height)`.
+        crop_size: Either `None` (default to original size)
+            or tuple of ints `(img_width, img_height)`.
+
+    # Returns
+        Image as numpy array.
+    """
+
+    img = cv2.imread(path)
+
+    if target_size:
+        if (img.shape[0], img.shape[1]) != target_size:
+            img = cv2.resize(img, target_size)
+
+    if crop_size:
+        img = dronet_central_image_crop(img, crop_size[0], crop_size[1])
+
+    return np.asarray(img, dtype=np.float32)
+
+
+def dronet_central_image_crop(img, crop_width=150, crop_heigth=150):
+    """
+    Crop the input image centered in width and starting from the bottom
+    in height.
+
+    # Arguments:
+        crop_width: Width of the crop.
+        crop_heigth: Height of the crop.
+
+    # Returns:
+        Cropped image.
+    """
+    half_the_width = int(img.shape[1] / 2)
+    img = img[img.shape[0] - crop_heigth: img.shape[0],
+          half_the_width - int(crop_width / 2):
+          half_the_width + int(crop_width / 2)]
+    return img

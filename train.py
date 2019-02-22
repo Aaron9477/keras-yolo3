@@ -63,6 +63,8 @@ def _main():
     # Train with frozen layers first, to get a stable loss.
     # Adjust num epochs to your dataset. This step is enough to obtain a not bad model.
     if True:
+        # 把y_true当成输入，作为模型的多输入，把loss封装为层（即Lambda层），作为模型的输出
+        # 在模型中，最终输出的y_pred就是loss
         model.compile(optimizer=Adam(lr=1e-3), loss={
             # use custom yolo_loss Lambda layer.
             'yolo_loss': lambda y_true, y_pred: y_pred})
@@ -153,9 +155,11 @@ def create_tiny_model(input_shape, anchors, num_classes, load_pretrained=True, f
     h, w = input_shape
     num_anchors = len(anchors)
 
-    # 这里只是定义了y_true的维度，shape=(?, 10, 10, 3, 7) dtype=float32>, <tf.Tensor 'input_3:0' shape=(?, 20, 20, 3, 7) dtype=float32>
-    # 因为输出有两层
-    # 定义的Input中的shape不包括batch这一个维度，只是每一个batch的维度，所以一共是五维
+    # shape=(?, 10, 10, 3, 7) dtype=float32>, <tf.Tensor 'input_3:0' shape=(?, 20, 20, 3, 7) dtype=float32>
+    # 因为输出有两层，每一层是一个尺度上的检测，num_anchors//2代表这层的anchor的数量
+    # 这里是一个字典，0代表32，1代表16
+    # num_classes+5，中的5是两个坐标和objectness
+    # 这里只是定义了y_true的结构形式，并没有赋值
     y_true = [Input(shape=(h//{0:32, 1:16}[l], w//{0:32, 1:16}[l], \
         num_anchors//2, num_classes+5)) for l in range(2)]
 
@@ -189,6 +193,7 @@ def data_generator(annotation_lines, batch_size, input_shape, anchors, num_class
     while True:
         image_data = []
         box_data = []
+        # 循环取batch_size数量的数据，所有数据取过一遍后重新打乱
         for b in range(batch_size):
             if i==0:
                 np.random.shuffle(annotation_lines)

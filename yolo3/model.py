@@ -170,7 +170,9 @@ def tiny_yolo_and_decision(inputs, num_anchors, num_classes, decision_output=1):
     coll = Dense(decision_output)(x7)
     coll = Activation('sigmoid')(coll)
 
-    model = Model(inputs, [y1, y2, steer, coll])
+    # 这里输出必须带上检测分支，否则检测分支不在模型中出现
+    model = Model(inputs=inputs, outputs=[y1, y2, steer, coll])
+    # model = Model(inputs, [steer, coll])
     # 打印网络参数
     print(model.summary())
     return model
@@ -326,6 +328,7 @@ def preprocess_true_boxes(true_boxes, input_shape, anchors, num_classes):
 
     m = true_boxes.shape[0]
     grid_shapes = [input_shape//{0:32, 1:16, 2:8}[l] for l in range(num_layers)]
+    # y_true的维度为gt_box总数*特征点x*特征点y*anchor的数量*(5+总类别数)＊输出layer的总数
     y_true = [np.zeros((m,grid_shapes[l][0],grid_shapes[l][1],len(anchor_mask[l]),5+num_classes),
         dtype='float32') for l in range(num_layers)]
 
@@ -487,3 +490,5 @@ def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
         if print_loss:
             loss = tf.Print(loss, [loss, xy_loss, wh_loss, confidence_loss, class_loss, K.sum(ignore_mask)], message='loss: ')
     return loss
+
+

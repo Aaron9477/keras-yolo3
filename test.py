@@ -1,31 +1,44 @@
-import numpy as np
+
+# test for inherit
+class A():
+    def fun1(self):
+        return self.fun2()
+
+class B(A):
+    def fun2(self):
+        return "AAAA"
+
+# right
+test = B()
+print(test.fun1())
+# wrong
+test2 = A()
+print(test2.fun1())
 
 
 
 
-def rand(a=0, b=1):
-    # np.random.rand()返回一个或一组服从“0~1”均匀分布的随机样本值
-    return np.random.rand()*(b-a) + a
 
-w = 320
-h = 320
-nh = 1080
-nw = 1920
 
-jitter = 0.3
+# test for yield
+# def fab(max):
+#     n, a, b = 0 ,0, 1
+#     while n < max:
+#         yield b
+#         a, b = b ,a+b
+#         n += 1
 
-# resize image
-new_ar = w / h * rand(1 - jitter, 1 + jitter) / rand(1 - jitter, 1 + jitter)
-scale = rand(.25, 2)
-if new_ar < 1:
-    nh = int(scale * h)
-    nw = int(nh * new_ar)
-else:
-    nw = int(scale * w)
-    nh = int(nw / new_ar)
+# right
+# for i in fab(10):
+#     print(i)
 
-dx = int(rand(0, w-nw))
-dy = int(rand(0, h-nh))
+# wrong
+# for i in range(10):
+#     print(fab(10))
 
-print("nh: ", nh, " nw: ", nw)
-print("dx: ", dx, " dy: ", dy)
+# a = fab(3)
+# for i in range(5):
+#     print(a.__next__())
+#
+# for i in range(5):
+#     print(fab(5).__next__())
