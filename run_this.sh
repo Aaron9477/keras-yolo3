@@ -24,5 +24,5 @@
 
 
 # test the model trained from keras-yolo, using the video
-python yolo_video.py --model logs/trained_weights_final.h5 --anchors turtlebot_training/anchor.txt --classes turtlebot_training/classes.txt --gpu_num 1 --input /media/zq610/2C9BDE0469DC4DFC/ubuntu/dl_dataset/turtlebot/raw_videos/two_small_1.mp4
+#python yolo_video.py --model logs/trained_weights_final.h5 --anchors turtlebot_training/anchor.txt --classes turtlebot_training/classes.txt --gpu_num 1 --input /media/zq610/2C9BDE0469DC4DFC/ubuntu/dl_dataset/turtlebot/raw_videos/two_small_1.mp4
 

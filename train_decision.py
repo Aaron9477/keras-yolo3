@@ -19,6 +19,7 @@ import dornet_utils
 from darknet_flags import FLAGS
 import tensorflow as tf
 from yolo3 import utils
+import dronet_log_utils
 
 
 def _main(argv):
@@ -31,7 +32,7 @@ def _main(argv):
     anchors_path = 'detection_decision/anchor.txt'
     # because I just use the tiny version, so only one of the following will be used
     # read the weight file trained only by yolo
-    tiny_yolo_weights_path = 'detection_decision/darknet15_weights.h5'
+    tiny_yolo_weights_path = 'turtlebot_model/yolov3_tiny_turtlebot.h5'
     yolo_weights_path = 'model_data/yolo_weights.h5'
     # TODO: the bs may need be changed
     batch_size = FLAGS.batch_size
@@ -49,10 +50,18 @@ def _main(argv):
 
     input_shape = (320, 320) # multiple of 32, hw
 
+    initial_epoch = 0
+    if not FLAGS.restore_model:
+        # In this case weights will start from random
+        weights_path = None
+    else:
+        weights_path = FLAGS.weights_fname
+        initial_epoch = FLAGS.initial_epoch
+
     is_tiny_version = len(anchors) == 6 # default setting
     if is_tiny_version:
         model = create_tiny_model(input_shape, anchors, num_classes, dronet_trainable_layer, \
-            freeze_body=2, weights_path=tiny_yolo_weights_path, )
+            freeze_body=2, yolo_weights_path=tiny_yolo_weights_path, weights_path=weights_path)
     else:
         model = create_model(input_shape, anchors, num_classes,
             freeze_body=2, weights_path=yolo_weights_path) # make sure you know what you freeze
@@ -60,11 +69,11 @@ def _main(argv):
     logging = TensorBoard(log_dir=log_dir)
     # 该回调函数将在period个epoch后保存模型到path中
     checkpoint = ModelCheckpoint(log_dir + 'ep{epoch:03d}-loss{loss:.3f}-val_loss{val_loss:.3f}.h5',
-        monitor='val_loss', save_weights_only=True, save_best_only=True, period=3)
+        monitor='val_loss', save_weights_only=True, save_best_only=False, period=3)
     # 当评价指标不在提升时，减少学习率
-    # reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=3, verbose=1)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=3, verbose=1)
     # 当监测值不再改善时，该回调函数将中止训练
-    # early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=1)
+    early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=6, verbose=1)
 
     val_split = 0.1
     # 读取dataset，并打乱顺序
@@ -102,6 +111,8 @@ def _main(argv):
     model.k_mse = tf.Variable(batch_size, trainable=False, name='k_mse', dtype=tf.int32)
     model.k_entropy = tf.Variable(batch_size, trainable=False, name='k_entropy', dtype=tf.int32)
 
+    # json_model_path = os.path.join(FLAGS.experiment_rootdir, FLAGS.json_model_fname)
+    # dornet_utils.modelToJson(model, json_model_path)
 
     # Train with frozen layers first, to get a stable loss.
     # Adjust num epochs to your dataset. This step is enough to obtain a not bad model.
@@ -112,7 +123,12 @@ def _main(argv):
         model.compile(loss={'yolo_loss': lambda y_true, y_pred: y_pred,
                             'dense_1': dornet_utils.hard_mining_mse(model.k_mse),
                             'activation_2': dornet_utils.hard_mining_entropy(model.k_entropy)},
-                    optimizer=Adam(lr=1e-3), loss_weights=[0, model.alpha, model.beta])
+                    optimizer=Adam(lr=1e-4), loss_weights=[0, model.alpha, model.beta])
+
+        dronet_log_utils.configure_output_dir(FLAGS.experiment_rootdir)
+        saveModelAndLoss = dronet_log_utils.MyCallback(filepath=FLAGS.experiment_rootdir,
+                                                period=FLAGS.log_rate,
+                                                batch_size=FLAGS.batch_size)
 
         print('Train on {} samples, val on {} samples, with batch size {}.'
               .format(dronet_train_dataset.samples, dronet_val_dataset.samples, batch_size))
@@ -123,11 +139,11 @@ def _main(argv):
         model.fit_generator(data_generator_wrapper(dronet_train_dataset, lines[:num_train],
                                                    batch_size, input_shape, anchors, num_classes),
                             epochs=FLAGS.epochs, steps_per_epoch=steps_per_epoch,
-                            callbacks=[logging, checkpoint],
+                            callbacks=[saveModelAndLoss, logging, checkpoint, reduce_lr, early_stopping],
                             validation_data=data_generator_wrapper(dronet_val_dataset,
                                             lines[num_train:], batch_size, input_shape, anchors, num_classes),
                             validation_steps=validation_steps,
-                            initial_epoch=0, )
+                            initial_epoch=initial_epoch, )
 
         model.save_weights(log_dir + 'trained_weights_stage_1.h5')
 
@@ -199,8 +215,8 @@ def create_model(input_shape, anchors, num_classes, load_pretrained=True, freeze
 
     return model
 
-def create_tiny_model(input_shape, anchors, num_classes, dronet_trainable_layer, load_pretrained=True,
-                      freeze_body=2, weights_path='model_data/tiny_yolo_weights.h5'):
+def create_tiny_model(input_shape, anchors, num_classes, dronet_trainable_layer, weights_path,
+                      load_pretrained=True, freeze_body=2, yolo_weights_path='model_data/tiny_yolo_weights.h5', ):
     '''create the training model, for Tiny YOLOv3'''
     K.clear_session() # get a new session
     h, w = input_shape
@@ -224,11 +240,16 @@ def create_tiny_model(input_shape, anchors, num_classes, dronet_trainable_layer,
     print('Create Tiny YOLOv3 model with {} anchors and {} classes.'.format(num_anchors, num_classes))
 
     if load_pretrained:
-        # by_name=True意味着通过layer的名字进行读取
-        # by_name=False意味着通过网络结构进行读取
-        # 这里应该是因为所有的layer都是默认的名字，所以，直接对应就好
-        model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
-        print('Load weights {}.'.format(weights_path))
+        if not weights_path:
+            # by_name=True意味着通过layer的名字进行读取
+            # by_name=False意味着通过网络结构进行读取
+            # 这里应该是因为所有的layer都是默认的名字，所以，直接对应就好
+            model_body.load_weights(yolo_weights_path, by_name=True, skip_mismatch=True)
+            print('Load weights {}.'.format(yolo_weights_path))
+        else:
+            model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
+            print("Loaded model from {}".format(weights_path))
+
         freeze_layer = list(range(len(model_body.layers)))
         freeze_layer = list(set(freeze_layer).difference(dronet_trainable_layer))
         try:

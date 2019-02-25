@@ -351,10 +351,12 @@ def hard_mining_mse(k):
             true_steer = y_true[:,1]
 
             # Steering loss
+            # 平方差误差
             l_steer = tf.multiply(t, K.square(pred_steer - true_steer))
 
             # Hard mining
             k_min = tf.minimum(k, n_samples_steer)
+            # 选取k_min个最大的误差
             _, indices = tf.nn.top_k(l_steer, k=k_min)
             max_l_steer = tf.gather(l_steer, indices)
             hard_l_steer = tf.divide(tf.reduce_sum(max_l_steer), tf.cast(k,tf.float32))

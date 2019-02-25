@@ -22,7 +22,7 @@ def _main():
     classes_path = 'turtlebot_training/classes.txt'
     anchors_path = 'turtlebot_training/anchor.txt'
     # only one of the following will be used
-    tiny_yolo_weights_path = 'turtlebot_training/darknet15_weights.h5'
+    tiny_yolo_weights_path = 'turtlebot_model/yolov3_tiny_turtlebot.h5'
     yolo_weights_path = 'model_data/yolo_weights.h5'
     first_stage_bs = 16
     second_stage_bs = 16
