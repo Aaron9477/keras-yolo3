@@ -36,8 +36,10 @@ def _main(argv):
     yolo_weights_path = 'model_data/yolo_weights.h5'
     # TODO: the bs may need be changed
     batch_size = FLAGS.batch_size
-    # first_stage_bs = 8
-    # second_stage_bs = 16
+
+    # origin trainable layer
+    # dronet_trainable_layer = (37, 39, 41, 43, 46, 49, 52, 55, 56)
+    # new trainable layer
     dronet_trainable_layer = (37, 39, 41, 43, 46, 49, 52, 55, 56)
     ##############################################
 
@@ -60,7 +62,7 @@ def _main(argv):
 
     is_tiny_version = len(anchors) == 6 # default setting
     if is_tiny_version:
-        model = create_tiny_model(input_shape, anchors, num_classes, dronet_trainable_layer, \
+        model = create_tiny_model(input_shape, anchors, num_classes, \
             freeze_body=2, yolo_weights_path=tiny_yolo_weights_path, weights_path=weights_path)
     else:
         model = create_model(input_shape, anchors, num_classes,
@@ -73,7 +75,12 @@ def _main(argv):
     # 当评价指标不在提升时，减少学习率
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=3, verbose=1)
     # 当监测值不再改善时，该回调函数将中止训练
-    early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=6, verbose=1)
+    early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=1)
+
+    dronet_log_utils.configure_output_dir(FLAGS.experiment_rootdir)
+    saveModelAndLoss = dronet_log_utils.MyCallback(filepath=FLAGS.experiment_rootdir,
+                                                   period=FLAGS.log_rate,
+                                                   batch_size=FLAGS.batch_size)
 
     val_split = 0.1
     # 读取dataset，并打乱顺序
@@ -119,16 +126,15 @@ def _main(argv):
     # 这里不是随便起名字，需要是网络的最终输出才能作为字典的元素，下面是随意起名的报错
     # ValueError: Unknown entry in loss dictionary: "steer_loss". Only expected the following keys: ['yolo_loss', 'dense_1', 'activation_2']
 
+    for layer in model.layers:
+        if not layer.name.startswith('decision_'):
+            layer.trainable = False
+
     if True:
         model.compile(loss={'yolo_loss': lambda y_true, y_pred: y_pred,
-                            'dense_1': dornet_utils.hard_mining_mse(model.k_mse),
-                            'activation_2': dornet_utils.hard_mining_entropy(model.k_entropy)},
-                    optimizer=Adam(lr=1e-4), loss_weights=[0, model.alpha, model.beta])
-
-        dronet_log_utils.configure_output_dir(FLAGS.experiment_rootdir)
-        saveModelAndLoss = dronet_log_utils.MyCallback(filepath=FLAGS.experiment_rootdir,
-                                                period=FLAGS.log_rate,
-                                                batch_size=FLAGS.batch_size)
+                            'decision_steer_output': dornet_utils.hard_mining_mse(model.k_mse),
+                            'decision_coll_output': dornet_utils.hard_mining_entropy(model.k_entropy)},
+                    optimizer=Adam(lr=1e-3), loss_weights=[0, model.alpha, model.beta])
 
         print('Train on {} samples, val on {} samples, with batch size {}.'
               .format(dronet_train_dataset.samples, dronet_val_dataset.samples, batch_size))
@@ -138,12 +144,27 @@ def _main(argv):
         # callbacks是回调函数，在合适的时候会被调用，callbacks其实是类的list，这些类均继承callback函数
         model.fit_generator(data_generator_wrapper(dronet_train_dataset, lines[:num_train],
                                                    batch_size, input_shape, anchors, num_classes),
-                            epochs=FLAGS.epochs, steps_per_epoch=steps_per_epoch,
-                            callbacks=[saveModelAndLoss, logging, checkpoint, reduce_lr, early_stopping],
+                            epochs=FLAGS.epochs_first, steps_per_epoch=steps_per_epoch,
+                            callbacks=[saveModelAndLoss, logging, checkpoint],
                             validation_data=data_generator_wrapper(dronet_val_dataset,
                                             lines[num_train:], batch_size, input_shape, anchors, num_classes),
                             validation_steps=validation_steps,
                             initial_epoch=initial_epoch, )
+
+    if True:
+        model.compile(loss={'yolo_loss': lambda y_true, y_pred: y_pred,
+                            'decision_steer_output': dornet_utils.hard_mining_mse(model.k_mse),
+                            'decision_coll_output': dornet_utils.hard_mining_entropy(model.k_entropy)},
+                    optimizer=Adam(lr=1e-4), loss_weights=[0, model.alpha, model.beta])
+
+        model.fit_generator(data_generator_wrapper(dronet_train_dataset, lines[:num_train],
+                                                   batch_size, input_shape, anchors, num_classes),
+                            epochs=FLAGS.epochs_second, steps_per_epoch=steps_per_epoch,
+                            callbacks=[saveModelAndLoss, logging, checkpoint, reduce_lr, early_stopping],
+                            validation_data=data_generator_wrapper(dronet_val_dataset,
+                                            lines[num_train:], batch_size, input_shape, anchors, num_classes),
+                            validation_steps=validation_steps,
+                            initial_epoch=FLAGS.epochs_first, )
 
         model.save_weights(log_dir + 'trained_weights_stage_1.h5')
 
@@ -215,7 +236,7 @@ def create_model(input_shape, anchors, num_classes, load_pretrained=True, freeze
 
     return model
 
-def create_tiny_model(input_shape, anchors, num_classes, dronet_trainable_layer, weights_path,
+def create_tiny_model(input_shape, anchors, num_classes, weights_path, dronet_trainable_layer=[],
                       load_pretrained=True, freeze_body=2, yolo_weights_path='model_data/tiny_yolo_weights.h5', ):
     '''create the training model, for Tiny YOLOv3'''
     K.clear_session() # get a new session
@@ -250,16 +271,16 @@ def create_tiny_model(input_shape, anchors, num_classes, dronet_trainable_layer,
             model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
             print("Loaded model from {}".format(weights_path))
 
-        freeze_layer = list(range(len(model_body.layers)))
-        freeze_layer = list(set(freeze_layer).difference(dronet_trainable_layer))
-        try:
-            for i in freeze_layer:
-                model_body.layers[i].trainable = False
-        except IndexError as error:
-            print("There is error when read the layers of network, \
-                    and the reason is %s" % str(error))
-        print('Freeze the {} layers from dronet branch of total {} layers.'
-              .format(len(dronet_trainable_layer), len(model_body.layers)))
+        # freeze_layer = list(range(len(model_body.layers)))
+        # freeze_layer = list(set(freeze_layer).difference(dronet_trainable_layer))
+        # try:
+        #     for i in freeze_layer:
+        #         model_body.layers[i].trainable = False
+        # except IndexError as error:
+        #     print("There is error when read the layers of network, \
+        #             and the reason is %s" % str(error))
+        # print('Freeze the {} layers from dronet branch of total {} layers.'
+        #       .format(len(dronet_trainable_layer), len(model_body.layers)))
 
     # Lambda其实就是定义一个任意的层，以上一层为输入，最后得到输出
     # 调用函数使用＊，是将每个元素作为位置参数传入，所以现在相当于传入一个list [*model_body.output, *y_true]，元素数为len(model_body.outpu)+len(y_true)

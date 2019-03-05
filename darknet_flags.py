@@ -16,9 +16,10 @@ gflags.DEFINE_string('img_mode', "rgb", 'Load mode for images, either '
 
 # Training
 gflags.DEFINE_integer('batch_size', 64, 'Batch size in training and evaluation')
-gflags.DEFINE_integer('epochs', 50, 'Number of epochs for training')
+gflags.DEFINE_integer('epochs_first', 15, 'Number of epochs for training')
+gflags.DEFINE_integer('epochs_second', 30, 'Number of epochs for training')
 gflags.DEFINE_integer('log_rate', 10, 'Logging rate for full model (epochs)')
-gflags.DEFINE_integer('initial_epoch',18, 'Initial epoch to start training')
+gflags.DEFINE_integer('initial_epoch',0 , 'Initial epoch to start training')
 
 # Files
 gflags.DEFINE_string('experiment_rootdir', "/home/zq610/WYZ/deeplearning/network/keras-yolo3/logs/detection_decision", 'Folder '
@@ -33,7 +34,7 @@ gflags.DEFINE_string('log_dir', "/home/zq610/WYZ/deeplearning/network/keras-yolo
                      ' training logs')
 
 # Model
-gflags.DEFINE_bool('restore_model', True, 'Whether to restore a trained'
+gflags.DEFINE_bool('restore_model', False, 'Whether to restore a trained'
                    ' model for training')
 gflags.DEFINE_string('weights_fname', "/home/zq610/WYZ/deeplearning/network/keras-yolo3/logs/detection_decision_2.24/ep018-loss0.082-val_loss0.116.h5", '(Relative) '
                                           'filename of model weights')

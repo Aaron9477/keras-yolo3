@@ -30,10 +30,19 @@ def DarknetConv2D_BN_Leaky(*args, **kwargs):
     """Darknet Convolution2D followed by BatchNormalization and LeakyReLU."""
     no_bias_kwargs = {'use_bias': False}
     no_bias_kwargs.update(kwargs)
-    return compose(
-        DarknetConv2D(*args, **no_bias_kwargs),
-        BatchNormalization(),
-        LeakyReLU(alpha=0.1))
+    # 因为参数只传递给Conv层，所以名字只传递给Conv层
+    if 'BN_name' in kwargs:
+        BN_name = kwargs['BN_name']
+        no_bias_kwargs.pop('BN_name')
+        return compose(
+            DarknetConv2D(*args, **no_bias_kwargs),
+            BatchNormalization(name=BN_name),
+            LeakyReLU(alpha=0.1))
+    else:
+        return compose(
+            DarknetConv2D(*args, **no_bias_kwargs),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.1))
 
 def resblock_body(x, num_filters, num_blocks):
     '''A series of resblocks starting with a downsampling Convolution2D'''
@@ -155,20 +164,32 @@ def tiny_yolo_and_decision(inputs, num_anchors, num_classes, decision_output=1):
             DarknetConv2D_BN_Leaky(256, (3,3)),
             DarknetConv2D(num_anchors*(num_classes+5), (1,1)))([x3,x1])
 
-    x4 = DarknetConv2D_BN_Leaky(256, (3, 3), strides=(2,2))(x1)
+    x4 = DarknetConv2D_BN_Leaky(256, (3, 3), strides=(2,2),
+                                name="decision_conv1",
+                                BN_name='decision_base_BN1')(x1)
     x5 = add([x2, x4])
-    x6 = DarknetConv2D_BN_Leaky(256, (1, 1))(x5)
+
+    # origin
+    # x6 = DarknetConv2D_BN_Leaky(256, (1, 1))(x5)
+    # changed
+    x6 = compose(DarknetConv2D_BN_Leaky(256, (3, 3),
+                                name="decision_conv2",
+                                BN_name='decision_BN2'),
+                 MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding='same'),
+                 DarknetConv2D_BN_Leaky(256, (1, 1),
+                                name="decision_base_conv3",
+                                BN_name='decision_BN3'))(x5)
 
     x7 = Flatten()(x6)
     x7 = Activation('relu')(x7)
     x7 = Dropout(0.5)(x7)
 
     # Steering channel
-    steer = Dense(decision_output)(x7)
+    steer = Dense(decision_output, name="decision_steer_output")(x7)
 
     # Collision channel
-    coll = Dense(decision_output)(x7)
-    coll = Activation('sigmoid')(coll)
+    coll = Dense(decision_output, name="decision_FC2")(x7)
+    coll = Activation('sigmoid', name='decision_coll_output')(coll)
 
     # 这里输出必须带上检测分支，否则检测分支不在模型中出现
     model = Model(inputs=inputs, outputs=[y1, y2, steer, coll])
